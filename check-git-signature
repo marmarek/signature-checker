@@ -1,0 +1,365 @@
+#!/usr/bin/python2
+# -*- encoding: utf8 -*-
+#
+# The Qubes OS Project, http://www.qubes-os.org
+#
+# Copyright (C) 2016 Marek Marczykowski-Górecki
+#                               <marmarek@invisiblethingslab.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+from __future__ import print_function
+import argparse
+import json
+import os
+import subprocess
+import tempfile
+
+import shutil
+
+import requests
+import sys
+
+import logging
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument('--pull-request', action='store', type=int,
+    help='Pull request number to check')
+parser.add_argument('--ref', action='store',
+    help='Ref name to check')
+parser.add_argument('--clone', action='store',
+    help='Clone given repository into temporary directory. If not given, '
+         'repository in current directory is assumed.')
+parser.add_argument('--url', action='store',
+    help='Github repository url. If not given, and no --clone option persent, '
+         'remote \'origin\' from local repository will be used.')
+parser.add_argument('--keyring', action='store',
+    help='Use given keyring for signature verification. If not given, '
+         'temporary keyring will be used and required keys downloaded from '
+         'a keyserver.')
+parser.add_argument('--print-keyid', action='store_true',
+    help='Print (first) Key ID used to sign commit/tag')
+parser.add_argument('--debug', action='store_true',
+    help='Show debug output')
+
+logger = logging.getLogger('check-git-signature')
+
+def verify_sig(data_path, signature_path, keyring_path,
+        download_missing_keys=False):
+    '''Verify signature of given file, download missing public key if
+    necessary
+
+    :param data_path: file path to be checked
+    :param signature_path: signature path for data_path
+    :param keyring_path: gpg keyring file path
+    :param download_missing_keys: should missing keys be automatically
+    downloaded
+    :return: keyid if correct signature is found, None otherwise
+    '''
+    gpg = subprocess.Popen(['gpgv2', '--keyring', keyring_path, '--status-fd',
+        '1', signature_path, data_path], stderr=open(os.devnull, 'w'),
+        stdout=subprocess.PIPE)
+    (output, _) = gpg.communicate()
+    for line in output.splitlines():
+        logger.debug('GPG status line: {}'.format(line))
+        if line.startswith('[GNUPG:] GOODSIG '):
+            # it's ok, get key ID
+            return line.split()[2]
+        elif line.startswith('[GNUPG:] NO_PUBKEY '):
+            keyid = line.split()[2]
+            logger.debug('Missing key {} (download: {})'.format(
+                keyid, download_missing_keys))
+            if download_missing_keys:
+                try:
+                    subprocess.check_call(
+                        ['gpg2', '-q', '--no-default-keyring',
+                        '--no-auto-check-trustdb',
+                        '--keyring', keyring_path, '--recv-key', keyid])
+                    return verify_sig(data_path, signature_path,
+                        keyring_path, download_missing_keys=False)
+                except subprocess.CalledProcessError:
+                    # failed to download public key
+                    return None
+    # 'GOODSIG' not found, assume signature is wrong
+    return None
+
+
+def verify_commit_sig(commit_obj, keyring_path, download_missing_keys=False):
+    '''Verify signature of given commit object, download missing public key if
+    necessary
+
+    :param commit_obj: commit object (string)
+    :param keyring_path: gpg keyring file path
+    :param download_missing_keys: should missing keys be automatically
+    downloaded
+    :return: keyid if correct signature is found, None otherwise
+    '''
+    tmpdir = tempfile.mkdtemp()
+    try:
+        (headers, message) = commit_obj.split('\n\n', 1)
+        if '\ngpgsig ' not in headers:
+            # commit not signed
+            return None
+        in_signature = False
+        signed_data = []
+        signature = []
+        for header in headers.splitlines():
+            if header.startswith(' ') and in_signature:
+                signature.append(header[1:])
+            elif header.startswith('gpgsig '):
+                in_signature = True
+                signature.append(header[len('gpgsig '):])
+            else:
+                signed_data.append(header)
+                in_signature = False
+        signature_path = os.path.join(tmpdir, 'commit.sig')
+        with open(signature_path, 'w') as signature_file:
+            signature_file.write('\n'.join(signature) + '\n')
+        data_path = os.path.join(tmpdir, 'commit')
+        with open(data_path, 'w') as data_file:
+            data_file.write('\n'.join(signed_data) + '\n')
+            data_file.write('\n')
+            data_file.write(message)
+        return verify_sig(data_path, signature_path, keyring_path,
+            download_missing_keys)
+    finally:
+        shutil.rmtree(tmpdir)
+
+
+def verify_tag_sig(tag_obj, keyring_path, download_missing_keys=False):
+    '''Verify signature of given tag object, download missing public key if
+    necessary
+
+    :param tag_obj: tag object (string)
+    :param keyring_path: gpg keyring file path
+    :param download_missing_keys: should missing keys be automatically
+    downloaded
+    :return: keyid if correct signature is found, None otherwise
+    '''
+    tmpdir = tempfile.mkdtemp()
+    try:
+        separator = '-----BEGIN PGP SIGNATURE-----'
+        if separator not in tag_obj:
+            # tag not signed
+            return None
+        (tag, sep, signature) = tag_obj.partition(separator)
+        signature_path = os.path.join(tmpdir, 'tag.sig')
+        with open(signature_path, 'w') as signature_file:
+            signature_file.write(sep + signature)
+        data_path = os.path.join(tmpdir, 'tag')
+        with open(data_path, 'w') as data_file:
+            data_file.write(tag)
+        return verify_sig(data_path, signature_path, keyring_path,
+            download_missing_keys)
+    finally:
+        shutil.rmtree(tmpdir)
+
+
+def verify_repository_ref(repo_dir, ref, pull_request_url,
+        keyring_path, download_missing_keys=False):
+    '''Verify signature(s) on given git ref
+
+    Check:
+     - commit signature
+     - tags in the repository
+     - tags in repository from where PR was sent (if applicable)
+
+     :param repo_dir: git repository path
+     :param ref: git ref to be checked, for example refs/heads/master
+     :param pull_request_url: github API URL for pull request
+     :param keyring_path: path to gpg keyring
+     :param download_missing_keys: should missing keys be downloaded into
+     keyring_path?
+     '''
+
+    # first check signature on the commit itself
+    logger.debug('Verifying commit {}'.format(ref))
+    commit_obj = subprocess.check_output(['git', '-C', repo_dir, 'cat-file',
+        'commit', ref])
+    verify_result = verify_commit_sig(commit_obj, keyring_path,
+        download_missing_keys)
+    logger.debug('Commit verification result: {}'.format(verify_result))
+    if verify_result:
+        return verify_result
+
+    # download tags from PR author's repository
+    # unfortunately git does not support natively "fetch tag for given commit
+    #  sha", so implement it manually...
+    if pull_request_url:
+        logger.debug(
+            'Fetching pull request data from {}'.format(pull_request_url))
+        commit_sha = subprocess.check_output(['git', '-C', repo_dir,
+            'rev-list', '-1', ref]).strip()
+        r = requests.get(pull_request_url)
+        if not r.ok:
+            raise Exception('Failed to get PR data: ' + r.reason)
+        pr_data = json.loads(r.content)
+        git_url = pr_data['head']['repo']['clone_url']
+        remote_tags = subprocess.check_output(['git', '-C', repo_dir,
+            'ls-remote', '-t', git_url])
+        logger.debug('Looking for tag describing {} in {}'.format(commit_sha,
+            git_url))
+        tags_to_fetch = []
+        for remote_tag in remote_tags.splitlines():
+            if not remote_tag.endswith('^{}'):
+                # look only on objects pointed by tags
+                continue
+            (tag_commit, tag_ref) = remote_tag.split('\t', 1)
+            (_, _, tag_name) = tag_ref.partition('refs/tags/')
+            tag_name = tag_name[:-3]
+            logger.debug('{} tagged with {}'.format(tag_commit,
+                tag_name))
+            if tag_commit == commit_sha:
+                logger.debug(
+                    'Will fetch tag {} from {}'.format(tag_name, git_url))
+                tags_to_fetch.extend(['tag', tag_name])
+        if tags_to_fetch:
+            subprocess.check_call(
+                ['git', '-C', repo_dir, 'fetch', '-q', '--no-tags', git_url]
+                + tags_to_fetch)
+
+    # then check tags
+    tags = subprocess.check_output(['git', '-C', repo_dir, 'tag',
+        '--points-at', ref])
+    for tag in tags.splitlines():
+        logger.debug('Verifying tag {}'.format(tag))
+        tag_obj = subprocess.check_output(
+            ['git', '-C', repo_dir, 'cat-file', 'tag', tag])
+        verify_result = verify_tag_sig(tag_obj, keyring_path,
+            download_missing_keys)
+        logger.debug(
+            'Tag {} verification result: {}'.format(tag, verify_result))
+        if verify_result:
+            return verify_result
+    return None
+
+
+def submit_commit_status(repo_name, commit_sha, status, description):
+    '''
+    Submit commit status to github, so it will be shown in pull request
+
+    :param repo_name: name of repository (in form "owner/name")
+    :param commit_sha: SHA of commit to set status on
+    :param status: True for "success", False for "failure"
+    :param description: status text
+    :return: None
+    '''
+
+    try:
+        github_token = os.environ['GITHUB_API_TOKEN']
+    except KeyError:
+        print('Setting commit status require GITHUB_API_TOKEN variable',
+            file=sys.stderr)
+        return
+
+    r = requests.post('https://api.github.com/repos/{}/statuses/{}'.format(
+        repo_name,
+        commit_sha
+    ), json={
+        'state': 'success' if status else 'failure',
+        'description': description,
+        'target_url': 'https://www.qubes-os.org/doc/code-signing/',
+        'context': 'policy/qubesos/code-signing',
+    }, headers={
+        'Authorization': 'token ' + github_token,
+    })
+    if not r.ok:
+        logger.error('Failed to set commit status: ' + r.reason)
+
+
+def main(args=None):
+    args = parser.parse_args(args)
+
+    console_handler = logging.StreamHandler(sys.stderr)
+    logger.addHandler(console_handler)
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.ERROR)
+
+    if args.pull_request is None and args.ref is None:
+        parser.error('Either --ref or --pull-request is required')
+    if args.pull_request is not None and args.ref is not None:
+        parser.error('Only one of --ref or --pull-request can be used')
+
+    tmpdir = tempfile.mkdtemp()
+    if args.clone is None:
+        try:
+            in_git = subprocess.check_output(
+                ['git', 'rev-parse', '--show-toplevel'],
+                stderr=open(os.devnull, 'w')).strip()
+        except subprocess.CalledProcessError:
+            # git returned nonzero, we are outside git repo
+            parser.error('--clone missing and the current directory is not a '
+                         'git repository')
+            # unreachable
+            raise
+    else:
+        in_git = os.path.join(tmpdir, 'repo')
+        logger.debug('Clonning {} into {}'.format(args.clone, in_git))
+        subprocess.check_call(['git', 'clone', '-q', '-n', args.clone, in_git])
+
+    if args.url is None:
+        try:
+            url = subprocess.check_output(['git', '-C', in_git, 'config',
+                'remote.origin.url']).strip()
+            logger.debug('Repository URL is {}'.format(url))
+        except subprocess.CalledProcessError:
+            parser.error('--url not given and remote \'origin\' not set')
+            # unreachable
+            raise
+    else:
+        url = args.url
+
+    if 'github.com' not in url:
+        parser.error('repository URL is not on github')
+    (_, _, repo) = url.partition('github.com')
+    # skip separator (':' or '/')
+    repo = repo[1:]
+    if repo.endswith('.git'):
+        repo = repo[:-4]
+
+    full_url = 'https://github.com/' + repo
+    if args.pull_request is not None:
+        subprocess.check_call(['git', '-C', in_git, 'fetch', '-q', full_url,
+            'refs/pull/{}/head:refs/FETCH_FOR_CHECK'.format(args.pull_request)])
+        ref = 'refs/FETCH_FOR_CHECK'
+    else:
+        ref = args.ref
+
+    pull_request_url = None
+    if args.pull_request:
+        pull_request_url = 'https://api.github.com/repos/{}/pulls/{}'.format(
+            repo, args.pull_request)
+
+    if args.keyring is not None:
+        keyring = args.keyring
+    else:
+        keyring = os.path.join(tmpdir, 'keyring.gpg')
+
+    verify_result = verify_repository_ref(in_git, ref, pull_request_url,
+        keyring, args.keyring is None)
+    shutil.rmtree(tmpdir)
+
+    if verify_result:
+        if args.print_keyid:
+            print(verify_result)
+        return 0
+    else:
+        return 1
+
+if __name__ == '__main__':
+    sys.exit(main())
