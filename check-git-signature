@@ -52,6 +52,8 @@ parser.add_argument('--keyring', action='store',
          'a keyserver.')
 parser.add_argument('--print-keyid', action='store_true',
     help='Print (first) Key ID used to sign commit/tag')
+parser.add_argument('--set-commit-status', action='store_true',
+    help='Set commit status on github')
 parser.add_argument('--debug', action='store_true',
     help='Show debug output')
 
@@ -168,7 +170,7 @@ def verify_tag_sig(tag_obj, keyring_path, download_missing_keys=False):
         shutil.rmtree(tmpdir)
 
 
-def verify_repository_ref(repo_dir, ref, pull_request_url,
+def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
         keyring_path, download_missing_keys=False):
     '''Verify signature(s) on given git ref
 
@@ -178,7 +180,7 @@ def verify_repository_ref(repo_dir, ref, pull_request_url,
      - tags in repository from where PR was sent (if applicable)
 
      :param repo_dir: git repository path
-     :param ref: git ref to be checked, for example refs/heads/master
+     :param commit_sha: git commit to be checked
      :param pull_request_url: github API URL for pull request
      :param keyring_path: path to gpg keyring
      :param download_missing_keys: should missing keys be downloaded into
@@ -186,9 +188,9 @@ def verify_repository_ref(repo_dir, ref, pull_request_url,
      '''
 
     # first check signature on the commit itself
-    logger.debug('Verifying commit {}'.format(ref))
+    logger.debug('Verifying commit {}'.format(commit_sha))
     commit_obj = subprocess.check_output(['git', '-C', repo_dir, 'cat-file',
-        'commit', ref])
+        'commit', commit_sha])
     verify_result = verify_commit_sig(commit_obj, keyring_path,
         download_missing_keys)
     logger.debug('Commit verification result: {}'.format(verify_result))
@@ -201,8 +203,6 @@ def verify_repository_ref(repo_dir, ref, pull_request_url,
     if pull_request_url:
         logger.debug(
             'Fetching pull request data from {}'.format(pull_request_url))
-        commit_sha = subprocess.check_output(['git', '-C', repo_dir,
-            'rev-list', '-1', ref]).strip()
         r = requests.get(pull_request_url)
         if not r.ok:
             raise Exception('Failed to get PR data: ' + r.reason)
@@ -233,7 +233,7 @@ def verify_repository_ref(repo_dir, ref, pull_request_url,
 
     # then check tags
     tags = subprocess.check_output(['git', '-C', repo_dir, 'tag',
-        '--points-at', ref])
+        '--points-at', commit_sha])
     for tag in tags.splitlines():
         logger.debug('Verifying tag {}'.format(tag))
         tag_obj = subprocess.check_output(
@@ -339,6 +339,8 @@ def main(args=None):
         ref = 'refs/FETCH_FOR_CHECK'
     else:
         ref = args.ref
+    commit_sha = subprocess.check_output(['git', '-C', in_git,
+        'rev-list', '-1', ref]).strip()
 
     pull_request_url = None
     if args.pull_request:
@@ -350,15 +352,20 @@ def main(args=None):
     else:
         keyring = os.path.join(tmpdir, 'keyring.gpg')
 
-    verify_result = verify_repository_ref(in_git, ref, pull_request_url,
+    verify_result = verify_repository_ref(in_git, commit_sha, pull_request_url,
         keyring, args.keyring is None)
     shutil.rmtree(tmpdir)
 
     if verify_result:
+        if args.set_commit_status:
+            submit_commit_status(repo, commit_sha, True, 'Signed with {}'.format(
+                verify_result))
         if args.print_keyid:
             print(verify_result)
         return 0
     else:
+        if args.set_commit_status:
+            submit_commit_status(repo, commit_sha, False, 'No signature found')
         return 1
 
 if __name__ == '__main__':
