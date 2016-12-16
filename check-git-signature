@@ -59,6 +59,7 @@ parser.add_argument('--debug', action='store_true',
 
 logger = logging.getLogger('check-git-signature')
 
+
 def verify_sig(data_path, signature_path, keyring_path,
         download_missing_keys=False):
     '''Verify signature of given file, download missing public key if
@@ -107,14 +108,15 @@ def verify_commit_sig(commit_obj, keyring_path, download_missing_keys=False):
     :param keyring_path: gpg keyring file path
     :param download_missing_keys: should missing keys be automatically
     downloaded
-    :return: keyid if correct signature is found, None otherwise
+    :return: (keyid, found_any_signature) - keyid if correct signature is
+    found, None otherwise
     '''
     tmpdir = tempfile.mkdtemp()
     try:
         (headers, message) = commit_obj.split('\n\n', 1)
         if '\ngpgsig ' not in headers:
             # commit not signed
-            return None
+            return None, False
         in_signature = False
         signed_data = []
         signature = []
@@ -135,8 +137,8 @@ def verify_commit_sig(commit_obj, keyring_path, download_missing_keys=False):
             data_file.write('\n'.join(signed_data) + '\n')
             data_file.write('\n')
             data_file.write(message)
-        return verify_sig(data_path, signature_path, keyring_path,
-            download_missing_keys)
+        return (verify_sig(data_path, signature_path, keyring_path,
+            download_missing_keys), True)
     finally:
         shutil.rmtree(tmpdir)
 
@@ -156,7 +158,7 @@ def verify_tag_sig(tag_obj, keyring_path, download_missing_keys=False):
         separator = '-----BEGIN PGP SIGNATURE-----'
         if separator not in tag_obj:
             # tag not signed
-            return None
+            return None, False
         (tag, sep, signature) = tag_obj.partition(separator)
         signature_path = os.path.join(tmpdir, 'tag.sig')
         with open(signature_path, 'w') as signature_file:
@@ -185,6 +187,8 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
      :param keyring_path: path to gpg keyring
      :param download_missing_keys: should missing keys be downloaded into
      keyring_path?
+     :return: (keyid, found_any_signature) - keyid if correct signature is
+     found, None otherwise
      '''
 
     # first check signature on the commit itself
@@ -194,8 +198,10 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
     verify_result = verify_commit_sig(commit_obj, keyring_path,
         download_missing_keys)
     logger.debug('Commit verification result: {}'.format(verify_result))
-    if verify_result:
+    if verify_result[0]:
         return verify_result
+
+    any_signature_found = verify_result[1]
 
     # download tags from PR author's repository
     # unfortunately git does not support natively "fetch tag for given commit
@@ -242,9 +248,10 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
             download_missing_keys)
         logger.debug(
             'Tag {} verification result: {}'.format(tag, verify_result))
-        if verify_result:
-            return verify_result
-    return None
+        any_signature_found = any_signature_found or verify_result[1]
+        if verify_result[0]:
+            return verify_result[0], any_signature_found
+    return None, any_signature_found
 
 
 def submit_commit_status(repo_name, commit_sha, status, description):
@@ -356,16 +363,21 @@ def main(args=None):
         keyring, args.keyring is None)
     shutil.rmtree(tmpdir)
 
-    if verify_result:
+    if verify_result[0]:
         if args.set_commit_status:
             submit_commit_status(repo, commit_sha, True, 'Signed with {}'.format(
-                verify_result))
+                verify_result[0]))
         if args.print_keyid:
-            print(verify_result)
+            print(verify_result[0])
         return 0
     else:
         if args.set_commit_status:
-            submit_commit_status(repo, commit_sha, False, 'No signature found')
+            if verify_result[1]:
+                submit_commit_status(repo, commit_sha, False,
+                    'Unable to verify (no valid key found)')
+            else:
+                submit_commit_status(repo, commit_sha, False,
+                    'No signature found')
         return 1
 
 if __name__ == '__main__':
