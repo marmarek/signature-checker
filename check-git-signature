@@ -168,8 +168,8 @@ def verify_tag_sig(tag_obj, keyring_path, download_missing_keys=False):
         data_path = os.path.join(tmpdir, 'tag')
         with open(data_path, 'w') as data_file:
             data_file.write(tag)
-        return verify_sig(data_path, signature_path, keyring_path,
-            download_missing_keys)
+        return (verify_sig(data_path, signature_path, keyring_path,
+            download_missing_keys), True)
     finally:
         shutil.rmtree(tmpdir)
 
