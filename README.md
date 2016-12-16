@@ -18,7 +18,7 @@ github webhook integration
 --------------------------
 
 This script can be automatically called using github webhook. For this you need
-a machine with public IP, preferably running Qubes OS (but it isn't strickly
+a machine with public IP, preferably running Qubes OS (but it isn't strictly
 required).
 
 1. Setup HTTP server in `sys-net`, configure it to execute CGI scripts from
