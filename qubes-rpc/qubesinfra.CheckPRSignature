@@ -1,0 +1,86 @@
+#!/usr/bin/python2
+# -*- encoding: utf8 -*-
+#
+# The Qubes OS Project, http://www.qubes-os.org
+#
+# Copyright (C) 2016 Marek Marczykowski-Górecki
+#                               <marmarek@invisiblethingslab.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+import ConfigParser
+import os
+import subprocess
+import sys
+
+# defaults
+config_defaults = {
+    'sig_checker_command': 'check-git-signature',
+    'owner_whitelist': 'QubesOS',
+    'github_api_token': '',
+    'keyring': '',
+    'repo_whitelist': '',
+    'repo_blacklist': '',
+}
+
+
+def main(args=None):
+    config_path = os.path.expanduser('~/.config/qubes/signature-checker')
+    config = ConfigParser.RawConfigParser(defaults=config_defaults,
+        allow_no_value=True)
+    config.read(config_path)
+
+    # input data
+    untrusted_repo_full_name = sys.stdin.readline().strip()
+    untrusted_pr_number = sys.stdin.readline().strip()
+    (untrusted_repo_owner, untrusted_repo_name) = \
+        untrusted_repo_full_name.split('/', 1)
+    owner_whitelist = config.get('DEFAULT', 'owner_whitelist').split(' ')
+    if untrusted_repo_owner not in owner_whitelist:
+        raise Exception('Repository owner not whitelisted')
+    repo_owner = untrusted_repo_owner
+    if '/' in untrusted_repo_name:
+        raise Exception('Invalid character in repository name')
+    repo_whitelist = config.get('DEFAULT', 'repo_whitelist')
+    if repo_whitelist:
+        if untrusted_repo_name not in repo_whitelist.split(' '):
+            raise Exception('Repository not whitelistd')
+    repo_blacklist = config.get('DEFAULT', 'repo_blacklist')
+    if repo_blacklist:
+        if untrusted_repo_name in repo_blacklist.split(' '):
+            raise Exception('Repository blacklistd')
+
+    # input data sanitized
+    repo_name = untrusted_repo_name
+    pr_number = int(untrusted_pr_number)
+
+    sig_checker_command = [
+        config.get('DEFAULT', 'sig_checker_command'),
+        '--clone', 'https://github.com/{}/{}'.format(repo_owner, repo_name),
+        '--pull-request', str(pr_number),
+        '--set-commit-status',
+        ]
+    keyring = config.get('DEFAULT', 'keyring')
+    if keyring:
+        sig_checker_command += ['--keyring', keyring]
+    command_env = os.environ.copy()
+    if config.get('DEFAULT', 'github_api_token'):
+        command_env['GITHUB_API_TOKEN'] = \
+            config.get('DEFAULT', 'github_api_token')
+    subprocess.check_call(sig_checker_command, stdin=open(os.devnull, 'r'),
+        env=command_env)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

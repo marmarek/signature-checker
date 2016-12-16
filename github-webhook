@@ -1,0 +1,55 @@
+#!/usr/bin/python2
+# -*- encoding: utf8 -*-
+#
+# The Qubes OS Project, http://www.qubes-os.org
+#
+# Copyright (C) 2016 Marek Marczykowski-Górecki
+#                               <marmarek@invisiblethingslab.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+import json
+import sys
+import subprocess
+import os
+
+
+def qrexec(vm, service, input_data=None):
+    p = subprocess.Popen(['/usr/bin/qrexec-client-vm', vm, service],
+            stdin=subprocess.PIPE, stdout=open(os.devnull, 'w'))
+    p.communicate(input_data)
+
+
+def handle(obj):
+    try:
+        if 'pull_request' not in obj:
+            return
+        if obj['action'] not in ['opened', 'synchronize']:
+            return
+        repo_name = obj['pull_request']['base']['repo']['full_name']
+        pr_id = obj['pull_request']['number']
+        # set target domain in qrexec policy
+        qrexec('dom0', 'qubesinfra.CheckPRSignature',
+            '{}\n{}\n'.format(repo_name, pr_id))
+    except KeyError:
+        pass
+
+obj = json.load(sys.stdin)
+handle(obj)
+
+
+print "Content-type: text/plain"
+print ""
+print "OK"
