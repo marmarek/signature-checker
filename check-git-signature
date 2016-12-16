@@ -44,7 +44,7 @@ parser.add_argument('--clone', action='store',
     help='Clone given repository into temporary directory. If not given, '
          'repository in current directory is assumed.')
 parser.add_argument('--url', action='store',
-    help='Github repository url. If not given, and no --clone option persent, '
+    help='Github repository url. If not given, and no --clone option present, '
          'remote \'origin\' from local repository will be used.')
 parser.add_argument('--keyring', action='store',
     help='Use given keyring for signature verification. If not given, '
