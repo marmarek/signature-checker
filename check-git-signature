@@ -318,7 +318,7 @@ def main(args=None):
             raise
     else:
         in_git = os.path.join(tmpdir, 'repo')
-        logger.debug('Clonning {} into {}'.format(args.clone, in_git))
+        logger.debug('Cloning {} into {}'.format(args.clone, in_git))
         subprocess.check_call(['git', 'clone', '-q', '-n', args.clone, in_git])
 
     if args.url is None:
