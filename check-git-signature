@@ -72,11 +72,13 @@ def verify_sig(data_path, signature_path, keyring_path,
     downloaded
     :return: keyid if correct signature is found, None otherwise
     '''
+    pipe_r, pipe_w = os.pipe()
     gpg = subprocess.Popen(['gpgv2', '--keyring', keyring_path, '--status-fd',
-        '1', signature_path, data_path], stderr=open(os.devnull, 'w'),
-        stdout=subprocess.PIPE)
-    (output, _) = gpg.communicate()
-    for line in output.splitlines():
+        str(pipe_w), signature_path, data_path], stderr=open(os.devnull, 'w'),
+        stdout=open(os.devnull, 'w'))
+    os.close(pipe_w)
+    for line in os.fdopen(pipe_r):
+        line = line.rstrip()
         logger.debug('GPG status line: {}'.format(line))
         if line.startswith('[GNUPG:] GOODSIG '):
             # it's ok, get key ID
