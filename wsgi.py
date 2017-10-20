@@ -80,6 +80,7 @@ def app(environ, start_response):
         '--clone', 'https://github.com/{}/{}'.format(repo_owner, repo_name),
         '--pull-request', str(pr_number),
         '--set-commit-status',
+        '--verbose',
         ]
     keyring = config.get('keyring')
     if keyring:
