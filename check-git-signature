@@ -214,7 +214,14 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
     if pull_request_url:
         logger.debug(
             'Fetching pull request data from {}'.format(pull_request_url))
-        r = requests.get(pull_request_url)
+        try:
+            github_token = os.environ['GITHUB_API_TOKEN']
+            headers = {
+                'Authorization': 'token ' + github_token,
+            }
+        except KeyError:
+            headers = {}
+        r = requests.get(pull_request_url, headers=headers)
         if not r.ok:
             raise Exception('Failed to get PR data: ' + r.reason)
         pr_data = json.loads(r.content)
