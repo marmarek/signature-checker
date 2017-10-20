@@ -37,6 +37,9 @@ config_defaults = {
     'repo_blacklist': '',
 }
 
+def response_wrapper(status, start_response):
+    start_response(status, [])
+    return iter([b''])
 
 def app(environ, start_response):
     config = config_defaults.copy()
@@ -48,28 +51,32 @@ def app(environ, start_response):
     # input data
     untrusted_obj = json.load(environ['wsgi.input'])
     if 'pull_request' not in untrusted_obj:
-        return
+        return response_wrapper('200 OK', start_response)
     if untrusted_obj['action'] not in ['opened', 'synchronize']:
-        return
+        return response_wrapper('200 OK', start_response)
 
-    untrusted_repo_full_name = untrusted_obj['pull_request']['base']['repo']['full_name']
-    untrusted_pr_number = untrusted_obj['pull_request']['number']
-    (untrusted_repo_owner, untrusted_repo_name) = \
-        untrusted_repo_full_name.split('/', 1)
-    owner_whitelist = config.get('owner_whitelist').split(' ')
-    if untrusted_repo_owner not in owner_whitelist:
-        raise Exception('Repository owner not whitelisted')
-    repo_owner = untrusted_repo_owner
-    if '/' in untrusted_repo_name:
-        raise Exception('Invalid character in repository name')
-    repo_whitelist = config.get('repo_whitelist')
-    if repo_whitelist:
-        if untrusted_repo_name not in repo_whitelist.split(' '):
-            raise Exception('Repository not whitelistd')
-    repo_blacklist = config.get('repo_blacklist')
-    if repo_blacklist:
-        if untrusted_repo_name in repo_blacklist.split(' '):
-            raise Exception('Repository blacklistd')
+    try:
+        untrusted_repo_full_name = untrusted_obj['pull_request']['base']['repo']['full_name']
+        untrusted_pr_number = untrusted_obj['pull_request']['number']
+        (untrusted_repo_owner, untrusted_repo_name) = \
+            untrusted_repo_full_name.split('/', 1)
+        owner_whitelist = config.get('owner_whitelist').split(' ')
+        if untrusted_repo_owner not in owner_whitelist:
+            raise Exception('Repository owner not whitelisted')
+        repo_owner = untrusted_repo_owner
+        if '/' in untrusted_repo_name:
+            raise Exception('Invalid character in repository name')
+        repo_whitelist = config.get('repo_whitelist')
+        if repo_whitelist:
+            if untrusted_repo_name not in repo_whitelist.split(' '):
+                raise Exception('Repository not whitelistd')
+        repo_blacklist = config.get('repo_blacklist')
+        if repo_blacklist:
+            if untrusted_repo_name in repo_blacklist.split(' '):
+                raise Exception('Repository blacklistd')
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        return response_wrapper('204 No content', start_response)
 
     # input data sanitized
     repo_name = untrusted_repo_name
@@ -92,12 +99,11 @@ def app(environ, start_response):
     try:
         check_git_signature.main(sig_checker_command[1:])
     except Exception as e:
-        start_response('500 Error', [])
         import traceback
         traceback.print_exc(file=sys.stderr)
-        return iter([b''])
-    start_response('200 OK', [])
-    return iter([b''])
+        return response_wrapper('500 Error', start_response)
+    return response_wrapper('200 OK', start_response)
+
 
 # check gpg presence & initialize its config
 try:
