@@ -57,4 +57,5 @@ required).
 
 
 If the machine is not running Qubes OS, edit `github-webhook` script to call
-`qubesinfra.CheckPRSignature` instead of `qrexec-client-vm`.
+`qubesinfra.CheckPRSignature` instead of `qrexec-client-vm`. Alternatively,
+there is also wsgi and heroku integration in this repository.
