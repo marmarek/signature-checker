@@ -98,3 +98,12 @@ def app(environ, start_response):
         return iter([b''])
     start_response('200 OK', [])
     return iter([b''])
+
+# check gpg presence & initialize its config
+try:
+    gpg_bin = os.environ.get('GPG', 'gpg2')
+    subprocess.check_call([gpg_bin, '-k'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+except subprocess.CalledProcessError:
+    print('No gpg found ({})!'.format(gpg_bin), file=sys.stderr)
+    sys.exit(1)
