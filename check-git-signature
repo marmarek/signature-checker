@@ -60,7 +60,8 @@ parser.add_argument('--debug', action='store_true',
     help='Show debug output')
 
 logger = logging.getLogger('check-git-signature')
-
+console_handler = logging.StreamHandler(sys.stderr)
+logger.addHandler(console_handler)
 
 def verify_sig(data_path, signature_path, keyring_path,
         download_missing_keys=False):
@@ -304,8 +305,6 @@ def submit_commit_status(repo_name, commit_sha, status, description):
 def main(args=None):
     args = parser.parse_args(args)
 
-    console_handler = logging.StreamHandler(sys.stderr)
-    logger.addHandler(console_handler)
     if args.debug:
         logger.setLevel(logging.DEBUG)
     elif args.verbose:
