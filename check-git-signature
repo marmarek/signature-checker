@@ -73,7 +73,8 @@ def verify_sig(data_path, signature_path, keyring_path,
     :return: keyid if correct signature is found, None otherwise
     '''
     pipe_r, pipe_w = os.pipe()
-    gpg = subprocess.Popen(['gpgv2', '--keyring', keyring_path, '--status-fd',
+    gpgv_bin = os.environ.get('GPGV', 'gpgv2')
+    gpg = subprocess.Popen([gpgv_bin, '--keyring', keyring_path, '--status-fd',
         str(pipe_w), signature_path, data_path], pass_fds=(pipe_w,),
         stderr=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL)
@@ -90,8 +91,9 @@ def verify_sig(data_path, signature_path, keyring_path,
                 keyid, download_missing_keys))
             if download_missing_keys:
                 try:
+                    gpg_bin = os.environ.get('GPG', 'gpg2')
                     subprocess.check_call(
-                        ['gpg2', '-q', '--no-default-keyring',
+                        [gpg_bin, '-q', '--no-default-keyring',
                         '--no-auto-check-trustdb',
                         '--keyring', keyring_path, '--recv-key', keyid])
                     return verify_sig(data_path, signature_path,
