@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python3
 # -*- encoding: utf8 -*-
 #
 # The Qubes OS Project, http://www.qubes-os.org
@@ -50,6 +50,6 @@ obj = json.load(sys.stdin)
 handle(obj)
 
 
-print "Content-type: text/plain"
-print ""
-print "OK"
+print("Content-type: text/plain")
+print("")
+print("OK")

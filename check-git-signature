@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python3
 # -*- encoding: utf8 -*-
 #
 # The Qubes OS Project, http://www.qubes-os.org
@@ -74,8 +74,9 @@ def verify_sig(data_path, signature_path, keyring_path,
     '''
     pipe_r, pipe_w = os.pipe()
     gpg = subprocess.Popen(['gpgv2', '--keyring', keyring_path, '--status-fd',
-        str(pipe_w), signature_path, data_path], stderr=open(os.devnull, 'w'),
-        stdout=open(os.devnull, 'w'))
+        str(pipe_w), signature_path, data_path], pass_fds=(pipe_w,),
+        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL)
     os.close(pipe_w)
     for line in os.fdopen(pipe_r):
         line = line.rstrip()
@@ -196,7 +197,7 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
     # first check signature on the commit itself
     logger.debug('Verifying commit {}'.format(commit_sha))
     commit_obj = subprocess.check_output(['git', '-C', repo_dir, 'cat-file',
-        'commit', commit_sha])
+        'commit', commit_sha]).decode()
     verify_result = verify_commit_sig(commit_obj, keyring_path,
         download_missing_keys)
     logger.debug('Commit verification result: {}'.format(verify_result))
@@ -217,7 +218,7 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
         pr_data = json.loads(r.content)
         git_url = pr_data['head']['repo']['clone_url']
         remote_tags = subprocess.check_output(['git', '-C', repo_dir,
-            'ls-remote', '-t', git_url])
+            'ls-remote', '-t', git_url]).decode('ascii')
         logger.debug('Looking for tag describing {} in {}'.format(commit_sha,
             git_url))
         tags_to_fetch = []
@@ -245,7 +246,7 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
     for tag in tags.splitlines():
         logger.debug('Verifying tag {}'.format(tag))
         tag_obj = subprocess.check_output(
-            ['git', '-C', repo_dir, 'cat-file', 'tag', tag])
+            ['git', '-C', repo_dir, 'cat-file', 'tag', tag]).decode('ascii')
         verify_result = verify_tag_sig(tag_obj, keyring_path,
             download_missing_keys)
         logger.debug(
@@ -309,7 +310,7 @@ def main(args=None):
         try:
             in_git = subprocess.check_output(
                 ['git', 'rev-parse', '--show-toplevel'],
-                stderr=open(os.devnull, 'w')).strip()
+                stderr=subprocess.DEVNULL).strip()
         except subprocess.CalledProcessError:
             # git returned nonzero, we are outside git repo
             parser.error('--clone missing and the current directory is not a '
@@ -324,7 +325,7 @@ def main(args=None):
     if args.url is None:
         try:
             url = subprocess.check_output(['git', '-C', in_git, 'config',
-                'remote.origin.url']).strip()
+                'remote.origin.url']).strip().decode('ascii')
             logger.debug('Repository URL is {}'.format(url))
         except subprocess.CalledProcessError:
             parser.error('--url not given and remote \'origin\' not set')
@@ -349,7 +350,7 @@ def main(args=None):
     else:
         ref = args.ref
     commit_sha = subprocess.check_output(['git', '-C', in_git,
-        'rev-list', '-1', ref]).strip()
+        'rev-list', '-1', ref]).strip().decode()
 
     pull_request_url = None
     if args.pull_request:
