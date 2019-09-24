@@ -110,6 +110,11 @@ try:
     gpg_bin = os.environ.get('GPG', 'gpg2')
     subprocess.check_call([gpg_bin, '-k'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # load pre-fetched keys
+    if os.path.exists('keys'):
+        for f in os.listdir('keys'):
+            if f.endswith('.asc'):
+                subprocess.call([gpg_bin, '--import', 'keys/' + f])
 except subprocess.CalledProcessError:
     print('No gpg found ({})!'.format(gpg_bin), file=sys.stderr)
     sys.exit(1)
