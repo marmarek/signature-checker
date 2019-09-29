@@ -19,7 +19,7 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-import ConfigParser
+import configparser
 import os
 import subprocess
 import sys
@@ -37,7 +37,7 @@ config_defaults = {
 
 def main(args=None):
     config_path = os.path.expanduser('~/.config/qubes/signature-checker')
-    config = ConfigParser.RawConfigParser(defaults=config_defaults,
+    config = configparser.RawConfigParser(defaults=config_defaults,
         allow_no_value=True)
     config.read(config_path)
 
