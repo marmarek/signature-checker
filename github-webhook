@@ -46,10 +46,10 @@ def handle(obj):
     except KeyError:
         pass
 
-obj = json.load(sys.stdin)
-handle(obj)
+if __name__ == '__main__':
+    obj = json.load(sys.stdin)
+    handle(obj)
 
-
-print("Content-type: text/plain")
-print("")
-print("OK")
+    print("Content-type: text/plain")
+    print("")
+    print("OK")
