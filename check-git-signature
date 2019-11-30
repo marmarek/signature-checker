@@ -50,6 +50,8 @@ parser.add_argument('--keyring', action='store',
     help='Use given keyring for signature verification. If not given, '
          'temporary keyring will be used and required keys downloaded from '
          'a keyserver.')
+parser.add_argument('--download-keys', action='store_true',
+    help='Download missing GPG keys even if a specific --keyring is given')
 parser.add_argument('--print-keyid', action='store_true',
     help='Print (first) Key ID used to sign commit/tag')
 parser.add_argument('--set-commit-status', action='store_true',
@@ -376,7 +378,7 @@ def main(args=None):
         keyring = os.path.join(tmpdir, 'keyring.gpg')
 
     verify_result = verify_repository_ref(in_git, commit_sha, pull_request_url,
-        keyring, args.keyring is None)
+        keyring, args.download_keys or args.keyring is None)
     shutil.rmtree(tmpdir)
 
     if verify_result[0]:

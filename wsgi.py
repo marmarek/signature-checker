@@ -37,16 +37,14 @@ config_defaults = {
     'repo_blacklist': '',
 }
 
+config = {}
+
 def response_wrapper(status, start_response):
     start_response(status, [])
     return iter([b''])
 
 def app(environ, start_response):
-    config = config_defaults.copy()
-    for key in config:
-        env_key = 'CHECKER_CONFIG_' + key
-        if env_key in os.environ:
-            config[key] = os.environ[env_key]
+    global config
 
     # input data
     untrusted_obj = json.load(environ['wsgi.input'])
@@ -86,6 +84,7 @@ def app(environ, start_response):
         config.get('sig_checker_command'),
         '--clone', 'https://github.com/{}/{}'.format(repo_owner, repo_name),
         '--pull-request', str(pr_number),
+        '--download-keys',
         '--set-commit-status',
         '--verbose',
         ]
@@ -105,6 +104,13 @@ def app(environ, start_response):
     return response_wrapper('200 OK', start_response)
 
 
+# load config
+config = config_defaults.copy()
+for key in config:
+    env_key = 'CHECKER_CONFIG_' + key
+    if env_key in os.environ:
+        config[key] = os.environ[env_key]
+
 # check gpg presence & initialize its config
 try:
     gpg_bin = os.environ.get('GPG', 'gpg2')
@@ -114,7 +120,12 @@ try:
     if os.path.exists('keys'):
         for f in os.listdir('keys'):
             if f.endswith('.asc'):
-                subprocess.call([gpg_bin, '--import', 'keys/' + f])
+                args = ['--import', 'keys/' + f]
+                if config.get('keyring'):
+                    args.insert(0, '--no-default-keyring')
+                    args.insert(0, '--keyring')
+                    args.insert(1, config.get('keyring'))
+                subprocess.call([gpg_bin] + args)
 except subprocess.CalledProcessError:
     print('No gpg found ({})!'.format(gpg_bin), file=sys.stderr)
     sys.exit(1)
