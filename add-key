@@ -1,0 +1,22 @@
+#!/bin/sh
+
+set -e
+
+keyid="$1"
+
+[ -n "$keyid" ]
+
+export GNUPGHOME=$(mktemp -d)
+trap "rm -rf $GNUPGHOME" EXIT
+
+gpg --keyserver pool.sks-keyservers.net --recv-key "$1"
+
+key_fpr=$(gpg -k "$1"|grep -o '[A-F0-9]\{32\}')
+
+target_path="$(dirname "$0")/keys/$key_fpr.asc"
+if [ -f "$target_path" ]; then
+    echo "Target file $target_path already exists"
+    exit 0
+fi
+
+gpg --export-options export-minimal -a --export "$1" > "$target_path"
