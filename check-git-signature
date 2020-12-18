@@ -100,7 +100,7 @@ def verify_sig(data_path, signature_path, keyring_path,
                     subprocess.check_call(
                         [gpg_bin, '-q', '--no-default-keyring',
                         '--no-auto-check-trustdb',
-                        '--keyserver', 'hkps://hkps.pool.sks-keyservers.net',
+                        '--keyserver', 'hkp://pool.sks-keyservers.net',
                         '--keyring', keyring_path, '--recv-key', keyid])
                     return verify_sig(data_path, signature_path,
                         keyring_path, download_missing_keys=False)
