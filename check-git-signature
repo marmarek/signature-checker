@@ -22,7 +22,6 @@
 
 from __future__ import print_function
 import argparse
-import json
 import os
 import subprocess
 import tempfile
@@ -65,8 +64,42 @@ logger = logging.getLogger('check-git-signature')
 console_handler = logging.StreamHandler(sys.stderr)
 logger.addHandler(console_handler)
 
+def download_key(keyring_path, source, keyid):
+    """
+    Try to download the key, return True if something was downloaded.
+    """
+    if source.startswith('hkp'):
+        try:
+            gpg_bin = os.environ.get('GPG', 'gpg2')
+            subprocess.check_call(
+                [gpg_bin, '-q', '--no-default-keyring',
+                '--no-auto-check-trustdb',
+                '--keyserver', source,
+                '--keyring', keyring_path, '--recv-key', keyid])
+            return True
+        except subprocess.CalledProcessError:
+            return False
+    elif source.startswith('http'):
+        r = requests.get(source)
+        if r.ok:
+            try:
+                gpg_bin = os.environ.get('GPG', 'gpg2')
+                p = subprocess.Popen(
+                    [gpg_bin, '-q', '--no-default-keyring',
+                    '--no-auto-check-trustdb',
+                    '--keyring', keyring_path, '--import'],
+                    stdin=subprocess.PIPE)
+                p.communicate(r.text.encode())
+                if p.returncode == 0:
+                    return True
+            except subprocess.CalledProcessError:
+                return False
+    else:
+        print('unknown source {}'.format(source))
+    return False
+
 def verify_sig(data_path, signature_path, keyring_path,
-        download_missing_keys=False):
+        download_missing_keys=False, github_user=None):
     '''Verify signature of given file, download missing public key if
     necessary
 
@@ -95,23 +128,23 @@ def verify_sig(data_path, signature_path, keyring_path,
             logger.debug('Missing key {} (download: {})'.format(
                 keyid, download_missing_keys))
             if download_missing_keys:
-                try:
-                    gpg_bin = os.environ.get('GPG', 'gpg2')
-                    subprocess.check_call(
-                        [gpg_bin, '-q', '--no-default-keyring',
-                        '--no-auto-check-trustdb',
-                        '--keyserver', 'hkp://pool.sks-keyservers.net',
-                        '--keyring', keyring_path, '--recv-key', keyid])
-                    return verify_sig(data_path, signature_path,
-                        keyring_path, download_missing_keys=False)
-                except subprocess.CalledProcessError:
-                    # failed to download public key
-                    return None
+                sources = ['hkp://pool.sks-keyservers.net', 'hkps://keys.openpgp.org']
+                if github_user:
+                    github_url = 'https://github.com/{}.gpg'.format(github_user)
+                    sources.append(github_url)
+                for source in sources:
+                    if download_key(keyring_path, source, keyid):
+                        ret = verify_sig(data_path, signature_path,
+                            keyring_path, download_missing_keys=False)
+                        if ret:
+                            return '{} downloaded from {}'.format(ret, source)
+                # failed to download public key
+                return None
     # 'GOODSIG' not found, assume signature is wrong
     return None
 
 
-def verify_commit_sig(commit_obj, keyring_path, download_missing_keys=False):
+def verify_commit_sig(commit_obj, keyring_path, download_missing_keys=False, github_user=None):
     '''Verify signature of given commit object, download missing public key if
     necessary
 
@@ -149,12 +182,12 @@ def verify_commit_sig(commit_obj, keyring_path, download_missing_keys=False):
             data_file.write('\n')
             data_file.write(message)
         return (verify_sig(data_path, signature_path, keyring_path,
-            download_missing_keys), True)
+            download_missing_keys, github_user), True)
     finally:
         shutil.rmtree(tmpdir)
 
 
-def verify_tag_sig(tag_obj, keyring_path, download_missing_keys=False):
+def verify_tag_sig(tag_obj, keyring_path, download_missing_keys=False, github_user=None):
     '''Verify signature of given tag object, download missing public key if
     necessary
 
@@ -178,7 +211,7 @@ def verify_tag_sig(tag_obj, keyring_path, download_missing_keys=False):
         with open(data_path, 'w') as data_file:
             data_file.write(tag)
         return (verify_sig(data_path, signature_path, keyring_path,
-            download_missing_keys), True)
+            download_missing_keys, github_user), True)
     finally:
         shutil.rmtree(tmpdir)
 
@@ -202,12 +235,23 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
      found, None otherwise
      '''
 
+    pr_data = None
+    pr_author = None
+    if pull_request_url:
+        logger.debug(
+            'Fetching pull request data from {}'.format(pull_request_url))
+        r = requests.get(pull_request_url)
+        if not r.ok:
+            raise Exception('Failed to get PR data: ' + r.reason)
+        pr_data = r.json()
+        pr_author = pr_data['head']['repo']['owner']['login']
+
     # first check signature on the commit itself
     logger.info('Verifying commit {}'.format(commit_sha))
     commit_obj = subprocess.check_output(['git', '-C', repo_dir, 'cat-file',
         'commit', commit_sha]).decode()
     verify_result = verify_commit_sig(commit_obj, keyring_path,
-        download_missing_keys)
+        download_missing_keys, pr_author)
     logger.info('Commit verification result: {}'.format(verify_result))
     if verify_result[0]:
         return verify_result
@@ -217,20 +261,7 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
     # download tags from PR author's repository
     # unfortunately git does not support natively "fetch tag for given commit
     #  sha", so implement it manually...
-    if pull_request_url:
-        logger.debug(
-            'Fetching pull request data from {}'.format(pull_request_url))
-        try:
-            github_token = os.environ['GITHUB_API_TOKEN']
-            headers = {
-                'Authorization': 'token ' + github_token,
-            }
-        except KeyError:
-            headers = {}
-        r = requests.get(pull_request_url, headers=headers)
-        if not r.ok:
-            raise Exception('Failed to get PR data: ' + r.reason)
-        pr_data = json.loads(r.content)
+    if pr_data:
         git_url = pr_data['head']['repo']['clone_url']
         remote_tags = subprocess.check_output(['git', '-C', repo_dir,
             'ls-remote', '-t', git_url]).decode('ascii')
@@ -263,7 +294,7 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
         tag_obj = subprocess.check_output(
             ['git', '-C', repo_dir, 'cat-file', 'tag', tag]).decode('ascii')
         verify_result = verify_tag_sig(tag_obj, keyring_path,
-            download_missing_keys)
+            download_missing_keys, pr_author)
         logger.info(
             'Tag {} verification result: {}'.format(tag, verify_result))
         any_signature_found = any_signature_found or verify_result[1]
