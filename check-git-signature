@@ -110,6 +110,8 @@ def verify_sig(data_path, signature_path, keyring_path,
     downloaded
     :return: keyid if correct signature is found, None otherwise
     '''
+    if github_user is None:
+        github_user = []
     pipe_r, pipe_w = os.pipe()
     gpgv_bin = os.environ.get('GPGV', 'gpgv2')
     gpg = subprocess.Popen([gpgv_bin, '--keyring', keyring_path, '--status-fd',
@@ -129,8 +131,8 @@ def verify_sig(data_path, signature_path, keyring_path,
                 keyid, download_missing_keys))
             if download_missing_keys:
                 sources = ['hkp://pool.sks-keyservers.net', 'hkps://keys.openpgp.org']
-                if github_user:
-                    github_url = 'https://github.com/{}.gpg'.format(github_user)
+                for user in github_user:
+                    github_url = 'https://github.com/{}.gpg'.format(user)
                     sources.append(github_url)
                 for source in sources:
                     if download_key(keyring_path, source, keyid):
@@ -244,7 +246,7 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
         if not r.ok:
             raise Exception('Failed to get PR data: ' + r.reason)
         pr_data = r.json()
-        pr_author = pr_data['head']['repo']['owner']['login']
+        pr_author = set([pr_data['head']['repo']['owner']['login'], pr_data['user']['login']])
 
     # first check signature on the commit itself
     logger.info('Verifying commit {}'.format(commit_sha))
