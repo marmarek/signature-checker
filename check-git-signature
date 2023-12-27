@@ -131,7 +131,6 @@ def verify_sig(data_path, signature_path, keyring_path,
                 keyid, download_missing_keys))
             if download_missing_keys:
                 sources = ['hkps://keyserver.ubuntu.com',
-                           'hkp://pool.sks-keyservers.net',
                            'hkps://keys.openpgp.org']
                 for user in github_user:
                     github_url = 'https://github.com/{}.gpg'.format(user)

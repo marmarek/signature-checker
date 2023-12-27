@@ -8,7 +8,7 @@ keyid="$1"
 
 keyserver="$2"
 
-[ -n "$keyserver" ] || keyserver=hkp://pool.sks-keyservers.net
+[ -n "$keyserver" ] || keyserver=hkps://keyserver.ubuntu.com
 
 export GNUPGHOME=$(mktemp -d)
 trap "rm -rf $GNUPGHOME" EXIT
