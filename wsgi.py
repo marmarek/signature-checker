@@ -91,6 +91,8 @@ def app(environ, start_response):
     keyring = config.get('keyring')
     if keyring:
         sig_checker_command += ['--keyring', keyring]
+        if not os.path.exists(keyring):
+            open(keyring, "w").close()
     command_env = os.environ.copy()
     if config.get('github_api_token'):
         command_env['GITHUB_API_TOKEN'] = \
@@ -111,21 +113,22 @@ for key in config:
     if env_key in os.environ:
         config[key] = os.environ[env_key]
 
-# check gpg presence & initialize its config
+# check sq presence & initialize its config
 try:
-    gpg_bin = os.environ.get('GPG', 'gpg2')
-    subprocess.check_call([gpg_bin, '-k'],
+    subprocess.check_call(['sq', 'version'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.check_call(['sqv', '--version'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # load pre-fetched keys
-    if os.path.exists('keys'):
+    if os.path.exists('keys') and config.get('keyring'):
+        keys = []
         for f in os.listdir('keys'):
             if f.endswith('.asc'):
-                args = ['--import', 'keys/' + f]
-                if config.get('keyring'):
-                    args.insert(0, '--no-default-keyring')
-                    args.insert(0, '--keyring')
-                    args.insert(1, config.get('keyring'))
-                subprocess.call([gpg_bin] + args)
+                keys.append('keys/' + f)
+        if keys:
+            subprocess.call([
+                'sq', 'keyring', 'merge',
+                '--output', config.get('keyring'), ] + keys)
 except subprocess.CalledProcessError:
-    print('No gpg found ({})!'.format(gpg_bin), file=sys.stderr)
+    print('"sq" or "sqv" not found!', file=sys.stderr)
     sys.exit(1)

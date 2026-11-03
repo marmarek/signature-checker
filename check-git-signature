@@ -50,7 +50,7 @@ parser.add_argument('--keyring', action='store',
          'temporary keyring will be used and required keys downloaded from '
          'a keyserver.')
 parser.add_argument('--download-keys', action='store_true',
-    help='Download missing GPG keys even if a specific --keyring is given')
+    help='Download missing PGP keys even if a specific --keyring is given')
 parser.add_argument('--print-keyid', action='store_true',
     help='Print (first) Key ID used to sign commit/tag')
 parser.add_argument('--set-commit-status', action='store_true',
@@ -70,30 +70,22 @@ def download_key(keyring_path, source, keyid):
     """
     if source.startswith('hkp'):
         try:
-            gpg_bin = os.environ.get('GPG', 'gpg2')
-            subprocess.check_call(
-                [gpg_bin, '-q', '--no-default-keyring',
-                '--no-auto-check-trustdb',
-                '--keyserver', source,
-                '--keyring', keyring_path, '--recv-key', keyid])
+            key = subprocess.check_output([
+                'sq', 'network', 'search',
+                '--server', source,
+                '--output=-',
+                keyid
+            ])
+            with open(keyring_path, 'a') as f:
+                f.write(key.decode())
             return True
         except subprocess.CalledProcessError:
             return False
     elif source.startswith('http'):
         r = requests.get(source)
         if r.ok:
-            try:
-                gpg_bin = os.environ.get('GPG', 'gpg2')
-                p = subprocess.Popen(
-                    [gpg_bin, '-q', '--no-default-keyring',
-                    '--no-auto-check-trustdb',
-                    '--keyring', keyring_path, '--import'],
-                    stdin=subprocess.PIPE)
-                p.communicate(r.text.encode())
-                if p.returncode == 0:
-                    return True
-            except subprocess.CalledProcessError:
-                return False
+            with open(keyring_path, 'a') as f:
+                f.write(r.text)
     else:
         print('unknown source {}'.format(source))
     return False
@@ -105,28 +97,26 @@ def verify_sig(data_path, signature_path, keyring_path,
 
     :param data_path: file path to be checked
     :param signature_path: signature path for data_path
-    :param keyring_path: gpg keyring file path
+    :param keyring_path: keyring file path
     :param download_missing_keys: should missing keys be automatically
     downloaded
     :return: keyid if correct signature is found, None otherwise
     '''
     if github_user is None:
         github_user = []
-    pipe_r, pipe_w = os.pipe()
-    gpgv_bin = os.environ.get('GPGV', 'gpgv2')
-    gpg = subprocess.Popen([gpgv_bin, '--keyring', keyring_path, '--status-fd',
-        str(pipe_w), signature_path, data_path], pass_fds=(pipe_w,),
-        stderr=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL)
-    os.close(pipe_w)
-    for line in os.fdopen(pipe_r):
+    sqv = subprocess.Popen(['sqv', '--keyring', keyring_path,
+        '--signature-file', signature_path, data_path],
+        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE)
+    stdout, stderr = sqv.communicate()
+    if sqv.returncode == 0:
+        return stdout.decode()
+    for line in stderr.decode().splitlines():
         line = line.rstrip()
-        logger.debug('GPG status line: {}'.format(line))
-        if line.startswith('[GNUPG:] GOODSIG '):
-            # it's ok, get key ID
-            return line.split()[2]
-        elif line.startswith('[GNUPG:] NO_PUBKEY '):
-            keyid = line.split()[2]
+        logger.debug('sq status line: {}'.format(line))
+        if 'Missing key ' in line:
+            # Missing key 7473414DF9A181A45244BDACFDD1B8244731B36C, which is needed to verify signature.
+            keyid = line.split()[2].rstrip(',')
             logger.debug('Missing key {} (download: {})'.format(
                 keyid, download_missing_keys))
             if download_missing_keys:
@@ -143,7 +133,6 @@ def verify_sig(data_path, signature_path, keyring_path,
                             return '{} downloaded from {}'.format(ret, source)
                 # failed to download public key
                 return None
-    # 'GOODSIG' not found, assume signature is wrong
     return None
 
 
@@ -152,7 +141,7 @@ def verify_commit_sig(commit_obj, keyring_path, download_missing_keys=False, git
     necessary
 
     :param commit_obj: commit object (string)
-    :param keyring_path: gpg keyring file path
+    :param keyring_path: keyring file path
     :param download_missing_keys: should missing keys be automatically
     downloaded
     :return: (keyid, found_any_signature) - keyid if correct signature is
@@ -195,7 +184,7 @@ def verify_tag_sig(tag_obj, keyring_path, download_missing_keys=False, github_us
     necessary
 
     :param tag_obj: tag object (string)
-    :param keyring_path: gpg keyring file path
+    :param keyring_path: keyring file path
     :param download_missing_keys: should missing keys be automatically
     downloaded
     :return: keyid if correct signature is found, None otherwise
@@ -231,7 +220,7 @@ def verify_repository_ref(repo_dir, commit_sha, pull_request_url,
      :param repo_dir: git repository path
      :param commit_sha: git commit to be checked
      :param pull_request_url: github API URL for pull request
-     :param keyring_path: path to gpg keyring
+     :param keyring_path: path to keyring
      :param download_missing_keys: should missing keys be downloaded into
      keyring_path?
      :return: (keyid, found_any_signature) - keyid if correct signature is
