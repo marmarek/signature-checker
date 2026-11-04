@@ -129,6 +129,8 @@ try:
             subprocess.call([
                 'sq', 'keyring', 'merge',
                 '--output', config.get('keyring'), ] + keys)
+    elif config.get('keyring'):
+        open(config.get('keyring'), 'a').close()
 except subprocess.CalledProcessError:
     print('"sq" or "sqv" not found!', file=sys.stderr)
     sys.exit(1)
