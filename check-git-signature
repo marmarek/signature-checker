@@ -104,19 +104,33 @@ def verify_sig(data_path, signature_path, keyring_path,
     '''
     if github_user is None:
         github_user = []
-    sqv = subprocess.Popen(['sqv', '--keyring', keyring_path,
-        '--signature-file', signature_path, data_path],
-        stderr=subprocess.PIPE,
-        stdout=subprocess.PIPE)
-    stdout, stderr = sqv.communicate()
-    if sqv.returncode == 0:
-        return stdout.decode().strip()
-    for line in stderr.decode().splitlines():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # first, construct keyring in GnuPG format
+        # point --homedir at empty directory to avoid common.conf with
+        # "use-keyboxd" option (which overrides --keyring option)
+        subprocess.call([
+            "gpg", f"--homedir={tmpdir}",
+            "--no-default-keyring", f"--keyring={keyring_path}.gpg",
+            "--import", keyring_path
+        ])
+    pipe_r, pipe_w = os.pipe()
+    gpgv_bin = os.environ.get('GPGV', 'gpgv2')
+    gpg = subprocess.Popen(
+            [gpgv_bin, "--keyring", f"{keyring_path}.gpg",
+            "--status-fd", str(pipe_w), signature_path, data_path],
+        pass_fds=(pipe_w,),
+        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL
+    )
+    os.close(pipe_w)
+    for line in os.fdopen(pipe_r):
         line = line.rstrip()
-        logger.debug('sq status line: {}'.format(line))
-        if 'Missing key ' in line:
-            # Missing key 7473414DF9A181A45244BDACFDD1B8244731B36C, which is needed to verify signature.
-            keyid = line.split()[2].rstrip(',')
+        logger.debug('GPG status line: {}'.format(line))
+        if line.startswith('[GNUPG:] GOODSIG '):
+            # it's ok, get key ID
+            return line.split()[2]
+        elif line.startswith('[GNUPG:] NO_PUBKEY '):
+            keyid = line.split()[2]
             logger.debug('Missing key {} (download: {})'.format(
                 keyid, download_missing_keys))
             if download_missing_keys:
